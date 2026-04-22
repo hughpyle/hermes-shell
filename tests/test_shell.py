@@ -190,6 +190,92 @@ def test_build_system_prompt_includes_binary_instructions():
     assert "binary" in prompt.lower()
 
 
+def test_build_system_prompt_includes_file_instructions():
+    profile = shell.TerminalProfile()
+    prompt = shell.build_system_prompt(profile)
+    assert "<<FILE>>" in prompt
+
+
+def test_parse_segments_file_marker():
+    text = "here it is:\n<<FILE>>\n/tmp/art.txt\n<<END>>\ndone"
+    segs = shell.parse_segments(text)
+    assert len(segs) == 3
+    assert segs[0] == ("text", "here it is:\n")
+    assert segs[1] == ("file", "\n/tmp/art.txt\n")
+    assert segs[2] == ("text", "\ndone")
+
+
+def test_parse_segments_mixed_binary_and_file():
+    encoded = base64.b64encode(b"\xff").decode()
+    text = f"<<FILE>>/a.txt<<END>>middle<<BINARY>>{encoded}<<END>>"
+    segs = shell.parse_segments(text)
+    assert segs[0] == ("file", "/a.txt")
+    assert segs[1] == ("text", "middle")
+    assert segs[2][0] == "binary"
+
+
+def test_emit_file_writes_raw_bytes(tmp_path):
+    f = tmp_path / "overstrike.txt"
+    f.write_bytes(b"HELLO\rWORLD\n")
+
+    raw_buf = io.BytesIO()
+
+    class DualOut:
+        buffer = raw_buf
+        def write(self, s):
+            raw_buf.write(s.encode("ascii", "replace"))
+        def flush(self):
+            raw_buf.flush()
+
+    shell.emit_file(str(f), out=DualOut())
+    assert raw_buf.getvalue() == b"HELLO\rWORLD\n"
+
+
+def test_emit_file_missing_file(capsys):
+    shell.emit_file("/nonexistent/path/xyz.txt")
+    out = capsys.readouterr().out
+    assert "error:" in out
+
+
+def test_emit_output_file_segment(tmp_path):
+    f = tmp_path / "test.txt"
+    f.write_bytes(b"RAW\rCONTENT")
+
+    raw_buf = io.BytesIO()
+
+    class DualOut:
+        buffer = raw_buf
+        def write(self, s):
+            raw_buf.write(s.encode("ascii", "replace"))
+        def flush(self):
+            raw_buf.flush()
+
+    text = f"intro\n<<FILE>>\n{f}\n<<END>>\noutro"
+    shell.emit_output(text, width=72, out=DualOut())
+    raw = raw_buf.getvalue()
+    assert b"RAW\rCONTENT" in raw
+    assert b"intro" in raw
+    assert b"outro" in raw
+
+
+def test_shell_loop_print_command(monkeypatch, tmp_path, capsys):
+    f = tmp_path / "hello.txt"
+    f.write_bytes(b"PRINTED\n")
+
+    prompts = iter([f".print {f}", ".exit"])
+
+    def fake_input(_prompt):
+        return next(prompts)
+
+    monkeypatch.setattr(shell, "input", fake_input)
+
+    shell.run_shell_loop(hermes_bin="hermes", profile=shell.TerminalProfile(), max_turns=5)
+
+    out = capsys.readouterr().out
+    assert "error" not in out
+    assert "PRINTED" in out
+
+
 def test_shell_loop_catches_hermes_error(monkeypatch, capsys):
     prompts = iter(["boom", ".exit"])
 

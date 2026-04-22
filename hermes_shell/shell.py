@@ -20,7 +20,9 @@ input = builtins.input
 
 
 BINARY_START = "<<BINARY>>"
-BINARY_END = "<<END>>"
+FILE_START = "<<FILE>>"
+SEGMENT_END = "<<END>>"
+_MARKERS = {BINARY_START: "binary", FILE_START: "file"}
 
 
 @dataclass(frozen=True)
@@ -140,23 +142,31 @@ def wrap_text(text: str, width: int) -> str:
 
 
 def parse_segments(text: str) -> list[tuple[str, str]]:
-    """Split text into ('text', content) and ('binary', base64) segments."""
+    """Split text into ('text', ...), ('binary', base64), and ('file', path) segments."""
     segments: list[tuple[str, str]] = []
     rest = text
     while rest:
-        start = rest.find(BINARY_START)
-        if start == -1:
+        best_pos = len(rest)
+        best_marker = None
+        best_kind = None
+        for marker, kind in _MARKERS.items():
+            pos = rest.find(marker)
+            if pos != -1 and pos < best_pos:
+                best_pos = pos
+                best_marker = marker
+                best_kind = kind
+        if best_kind is None:
             segments.append(("text", rest))
             break
-        if start > 0:
-            segments.append(("text", rest[:start]))
-        rest = rest[start + len(BINARY_START) :]
-        end = rest.find(BINARY_END)
+        if best_pos > 0:
+            segments.append(("text", rest[:best_pos]))
+        rest = rest[best_pos + len(best_marker) :]
+        end = rest.find(SEGMENT_END)
         if end == -1:
-            segments.append(("binary", rest))
+            segments.append((best_kind, rest))
             break
-        segments.append(("binary", rest[:end]))
-        rest = rest[end + len(BINARY_END) :]
+        segments.append((best_kind, rest[:end]))
+        rest = rest[end + len(SEGMENT_END) :]
     return segments
 
 
@@ -168,6 +178,22 @@ def emit_text(text: str, width: int = 72, out=None) -> None:
     out.flush()
 
 
+def emit_file(path: str, out=None) -> None:
+    """Write a file's raw bytes to stdout, preserving CR overstrike and all content."""
+    buf = getattr(out, "buffer", None) if out else None
+    buf = buf or sys.stdout.buffer
+    try:
+        data = Path(path).read_bytes()
+    except Exception as exc:
+        text_out = out or sys.stdout
+        msg = str(exc).split("\n", 1)[0]
+        text_out.write(f"error: {msg}\n")
+        text_out.flush()
+        return
+    buf.write(data)
+    buf.flush()
+
+
 def emit_output(text: str, width: int = 72, out=None) -> None:
     out = out or sys.stdout
     for kind, content in parse_segments(text):
@@ -175,7 +201,9 @@ def emit_output(text: str, width: int = 72, out=None) -> None:
             stripped = content.strip()
             if stripped:
                 emit_text(stripped, width=width, out=out)
-        else:
+        elif kind == "file":
+            emit_file(content.strip(), out=out)
+        elif kind == "binary":
             try:
                 raw = base64.b64decode(content.strip())
             except Exception:
@@ -218,6 +246,9 @@ def run_shell_loop(
             return 0
         if prompt in {".reset", ".new"}:
             session_id = None
+            continue
+        if prompt.startswith(".print "):
+            emit_file(prompt[7:].strip())
             continue
 
         try:

@@ -5,10 +5,11 @@ Hermes session alive across turns.
 
 It is meant for hardcopy terminals and teletype-like links:
 
-- ASCII only on output
+- ASCII only on output (with BEL pass-through)
 - strict wrapping to terminal width, default 72 columns
+- preserves leading whitespace and blank lines (safe for ASCII art)
+- binary mode for tape punch via base64-delimited segments
 - no Hermes TUI, no slash completion, no banner, no color
-- optional paced output, default 10 characters per second
 - respects `TERM`, `COLUMNS`, and `LINES`
 - injects terminal constraints into Hermes via
   `HERMES_EPHEMERAL_SYSTEM_PROMPT`
@@ -21,7 +22,7 @@ installed `hermes` command instead of patching Hermes internals.
 ```sh
 cd ~/play/hermes-shell
 ./scripts/install-local.sh
-~/.local/bin/hermes-shell-login --cps 0
+~/.local/bin/hermes-shell-login
 ```
 
 Then type normal prompts.
@@ -75,37 +76,36 @@ If these are not already set, the install wrapper defaults them to:
 - `TERM=tty33`
 - `COLUMNS=72`
 - `LINES=24`
-- `HERMES_SHELL_CPS=10`
 
-Second, it builds a strict system-prompt addendum and passes it through
+Second, it builds a system-prompt addendum from
+`hermes_shell/system_prompt.txt` and passes it through
 `HERMES_EPHEMERAL_SYSTEM_PROMPT`, telling Hermes that it is talking to a
-hardcopy terminal with those constraints.
+hardcopy terminal with those constraints. You can edit that file directly
+to change what Hermes is told about the terminal.
 
 Important: `hermes-shell` does not itself interpret terminfo or emulate a
 terminal. It is a plain text wrapper that:
 
 - tells Hermes about the terminal constraints
 - reformats Hermes output locally
-- strips non-ASCII characters
-- wraps text to the selected width
-- optionally paces output
+- strips non-ASCII characters (preserving BEL)
+- wraps long lines to the selected width
+- preserves short lines, indentation, and blank lines verbatim
 
-## output pacing
+## binary mode
 
-By default output is paced at 10 characters per second, which is useful
-for real teletype-like devices.
+The shell supports an 8-bit binary data path, useful for punching tape
+on devices like the ASR33 in binary mode.
 
-For a modern terminal during testing, disable pacing with:
+Hermes can emit raw binary data by base64-encoding it between
+`<<BINARY>>` and `<<END>>` markers, each on its own line. The shell
+decodes the base64 content and writes the raw bytes directly to stdout,
+bypassing ASCII sanitization and text wrapping. Normal text before and
+after the markers is displayed normally.
 
-```sh
-~/.local/bin/hermes-shell-login --cps 0
-```
-
-Notes:
-
-- this is host-side pacing only
-- it is not hardware flow control
-- serial `stty` and line-discipline tuning are still separate concerns
+This is always available — no flag needed. The system prompt tells
+Hermes about the capability and instructs it to use binary mode only
+when the user asks to punch tape or send binary data.
 
 ## local commands
 
@@ -138,7 +138,7 @@ It does not:
 So the intended flow is:
 
 1. run `install-local.sh` as the target user
-2. test `~/.local/bin/hermes-shell-login --cps 0`
+2. test `~/.local/bin/hermes-shell-login`
 3. only then wire it into ssh or getty
 
 Run it like this:
@@ -148,13 +148,13 @@ cd ~/play/hermes-shell
 ./scripts/install-local.sh
 ```
 
-After it finishes, test the wrapper on a modern terminal with:
+After it finishes, test the wrapper:
 
 ```sh
-~/.local/bin/hermes-shell-login --cps 0
+~/.local/bin/hermes-shell-login
 ```
 
-That should drop you into the minimal Hermes shell without output pacing.
+That should drop you into the minimal Hermes shell.
 If that works, then proceed to login-shell or getty setup.
 
 Files created by the installer:
@@ -168,7 +168,6 @@ defaults if they are not already present:
 - `TERM=tty33`
 - `COLUMNS=72`
 - `LINES=24`
-- `HERMES_SHELL_CPS=10`
 
 and then execs the virtualenv's `hermes-shell` command.
 
@@ -187,15 +186,15 @@ hermes-shell-login --help
 
 Useful flags:
 
-- `--cps 10`         pace output for a real teletype
-- `--cps 0`          disable pacing on a modern terminal
 - `--columns 72`     hard wrap width
 - `--lines 24`       advertised screen height
 - `--term tty33`     terminal type handed to Hermes
 - `--hermes-bin ...` use a non-default Hermes executable
+- `--max-turns 90`   max Hermes agent turns per prompt
 - `--model ...`      pin a Hermes model
 - `--provider ...`   pin a Hermes provider
 - `--toolsets ...`   restrict Hermes toolsets
+- `--skills ...`     enable specific Hermes skills
 
 ## copy-paste ssh account setup
 
@@ -295,9 +294,17 @@ Case 2: USB/Teensy/Arduino adapter that already smooths out terminal
 quirks
 
 You may still use `tty33` as the TERM value, but you may not need actual
-110-baud host-side tty settings or the same delays. In that case the
-wrapper's text pacing and width control may be enough, with less `stty`
-tuning.
+110-baud host-side tty settings or the same delays. The wrapper's width
+control may be enough, with less `stty` tuning.
+
+## error handling
+
+Hermes subprocess failures are caught and reported as a single concise
+line (`error: ...`), then the shell returns to the prompt. No tracebacks
+are printed — important when output goes to a mechanical device where
+long uninterruptible output is costly.
+
+The shell handles SIGHUP (ssh disconnect) with a clean exit.
 
 ## limitations
 
@@ -314,8 +321,6 @@ Current limitations:
   `session_id:` line
 - wrapper session continuity lasts only while the wrapper process is
   alive
-- error handling is intentionally simple: Hermes subprocess failures are
-  surfaced directly
 - this wrapper formats plain text; it is not a terminfo emulator and it
   does not replace `stty`, `agetty`, or serial line setup
 
@@ -327,3 +332,6 @@ upgrades without patching the core TUI.
 
 Session continuity is preserved by parsing the `session_id:` line from
 `hermes chat -Q` and feeding it back with `--resume` on the next turn.
+
+The system prompt is loaded from `hermes_shell/system_prompt.txt` at
+runtime, so you can edit it without touching the Python code.

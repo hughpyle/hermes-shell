@@ -21,7 +21,7 @@ installed `hermes` command instead of patching Hermes internals.
 
 ```sh
 cd ~/play/hermes-shell
-./scripts/install-local.sh
+./install.sh
 ~/.local/bin/hermes-shell-login
 ```
 
@@ -119,7 +119,7 @@ Everything else is sent to Hermes as plain text.
 
 ## install
 
-The `install-local.sh` script is a convenience installer for one Unix
+The `install.sh` script is a convenience installer for one Unix
 account.
 
 It does exactly three things:
@@ -137,7 +137,7 @@ It does not:
 
 So the intended flow is:
 
-1. run `install-local.sh` as the target user
+1. run `install.sh` as the target user
 2. test `~/.local/bin/hermes-shell-login`
 3. only then wire it into ssh or getty
 
@@ -145,7 +145,7 @@ Run it like this:
 
 ```sh
 cd ~/play/hermes-shell
-./scripts/install-local.sh
+./install.sh
 ```
 
 After it finishes, test the wrapper:
@@ -212,7 +212,7 @@ sudo passwd hermes
 
 ```sh
 sudo -u hermes -H sh -lc '
-cd ~/play/hermes-shell && ./scripts/install-local.sh
+cd ~/play/hermes-shell && ./install.sh
 '
 ```
 

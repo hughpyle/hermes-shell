@@ -15,14 +15,14 @@
 # Run this as the user who should own and run hermes-shell.
 # Example:
 #   cd ~/play/hermes-shell
-#   ./scripts/install-local.sh
+#   ./install.sh
 #
 # After running it, test with:
 #   ~/.local/bin/hermes-shell-login
 
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 VENV="$ROOT/.venv"
 BIN_DIR="${HOME}/.local/bin"
 WRAPPER="$BIN_DIR/hermes-shell-login"

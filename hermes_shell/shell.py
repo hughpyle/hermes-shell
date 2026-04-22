@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import builtins
+import json
 import os
 from pathlib import Path
 import re
@@ -11,6 +12,9 @@ import subprocess
 import sys
 import textwrap
 import unicodedata
+import urllib.error
+import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -126,6 +130,43 @@ def run_turn(
     return parse_hermes_output(result.stdout)
 
 
+def run_turn_gateway(
+    prompt: str,
+    session_id: str | None,
+    gateway_url: str,
+    profile: TerminalProfile,
+    model: str | None = None,
+) -> tuple[str, str]:
+    """Send a turn via the Hermes HTTP gateway (OpenAI-compatible API)."""
+    if session_id is None:
+        session_id = uuid.uuid4().hex
+    url = gateway_url.rstrip("/") + "/v1/chat/completions"
+    body = {
+        "messages": [
+            {"role": "system", "content": build_system_prompt(profile)},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    if model:
+        body["model"] = model
+    data = json.dumps(body).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Hermes-Session-Id": session_id,
+    }
+    req = urllib.request.Request(url, data=data, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace").split("\n", 1)[0]
+        raise RuntimeError(detail or f"gateway returned {exc.code}") from None
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"gateway unreachable: {exc.reason}") from None
+    text = result["choices"][0]["message"]["content"]
+    return text, session_id
+
+
 def ascii_sanitize(text: str) -> str:
     return unicodedata.normalize("NFKD", text).translate(_ASCII_TABLE)
 
@@ -239,6 +280,7 @@ def run_shell_loop(
     provider: str | None = None,
     toolsets: str | None = None,
     skills: Iterable[str] | None = None,
+    gateway: str | None = None,
 ) -> int:
     profile = profile or detect_terminal_profile()
     session_id = None
@@ -268,17 +310,26 @@ def run_shell_loop(
                 emit_file(prompt[7:].strip())
                 continue
 
-            response, new_sid = run_turn(
-                prompt=prompt,
-                session_id=session_id,
-                hermes_bin=hermes_bin,
-                profile=profile,
-                max_turns=max_turns,
-                model=model,
-                provider=provider,
-                toolsets=toolsets,
-                skills=skills,
-            )
+            if gateway:
+                response, new_sid = run_turn_gateway(
+                    prompt=prompt,
+                    session_id=session_id,
+                    gateway_url=gateway,
+                    profile=profile,
+                    model=model,
+                )
+            else:
+                response, new_sid = run_turn(
+                    prompt=prompt,
+                    session_id=session_id,
+                    hermes_bin=hermes_bin,
+                    profile=profile,
+                    max_turns=max_turns,
+                    model=model,
+                    provider=provider,
+                    toolsets=toolsets,
+                    skills=skills,
+                )
         except KeyboardInterrupt:
             _interrupted()
             continue
@@ -308,6 +359,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--provider", default=None)
     parser.add_argument("--toolsets", default=None)
     parser.add_argument("--skills", action="append", default=None)
+    parser.add_argument("--gateway", default=os.getenv("HERMES_GATEWAY"),
+                        help="Hermes gateway URL (e.g. http://localhost:8642)")
     args = parser.parse_args(argv)
 
     detected = detect_terminal_profile()
@@ -324,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
         provider=args.provider,
         toolsets=args.toolsets,
         skills=args.skills,
+        gateway=args.gateway,
     )
 
 

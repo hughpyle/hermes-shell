@@ -332,3 +332,130 @@ def test_shell_loop_catches_hermes_error(monkeypatch, capsys):
     # no traceback — just one line
     error_lines = [l for l in out.splitlines() if "error:" in l]
     assert len(error_lines) == 1
+
+
+def test_run_turn_gateway_sends_correct_request(monkeypatch):
+    import json
+    import urllib.request
+    captured = {}
+
+    class FakeResponse:
+        def __init__(self):
+            self.data = json.dumps({
+                "choices": [{"message": {"content": "gateway says hello"}}]
+            }).encode()
+        def read(self):
+            return self.data
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.headers)
+        captured["body"] = json.loads(req.data)
+        return FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    profile = shell.TerminalProfile(columns=72)
+    response, sid = shell.run_turn_gateway(
+        prompt="hello",
+        session_id="test-session-123",
+        gateway_url="http://localhost:8642",
+        profile=profile,
+    )
+
+    assert response == "gateway says hello"
+    assert sid == "test-session-123"
+    assert captured["url"] == "http://localhost:8642/v1/chat/completions"
+    assert captured["headers"]["X-hermes-session-id"] == "test-session-123"
+    assert captured["body"]["messages"][0]["role"] == "system"
+    assert captured["body"]["messages"][1] == {"role": "user", "content": "hello"}
+
+
+def test_run_turn_gateway_generates_session_id_when_none(monkeypatch):
+    import json
+    import urllib.request
+
+    class FakeResponse:
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, **kw: FakeResponse())
+
+    _, sid = shell.run_turn_gateway(
+        prompt="hi",
+        session_id=None,
+        gateway_url="http://localhost:8642",
+        profile=shell.TerminalProfile(),
+    )
+
+    assert sid is not None
+    assert len(sid) == 32  # uuid hex
+
+
+def test_run_turn_gateway_http_error(monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    def fake_urlopen(req, **kw):
+        raise urllib.error.HTTPError(
+            req.full_url, 500, "Internal Server Error",
+            {}, io.BytesIO(b"something broke"),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError, match="something broke"):
+        shell.run_turn_gateway(
+            prompt="hi",
+            session_id="s1",
+            gateway_url="http://localhost:8642",
+            profile=shell.TerminalProfile(),
+        )
+
+
+def test_run_turn_gateway_unreachable(monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    def fake_urlopen(req, **kw):
+        raise urllib.error.URLError("Connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError, match="gateway unreachable"):
+        shell.run_turn_gateway(
+            prompt="hi",
+            session_id="s1",
+            gateway_url="http://localhost:8642",
+            profile=shell.TerminalProfile(),
+        )
+
+
+def test_shell_loop_uses_gateway_when_set(monkeypatch, capsys):
+    prompts = iter(["hello", ".exit"])
+
+    def fake_input(_prompt):
+        return next(prompts)
+
+    def fake_gateway(prompt, session_id, gateway_url, profile, model=None):
+        return ("GATEWAY RESPONSE", "gs1")
+
+    monkeypatch.setattr(shell, "input", fake_input)
+    monkeypatch.setattr(shell, "run_turn_gateway", fake_gateway)
+    monkeypatch.setattr(shell, "emit_output", lambda text, **kw: print(text))
+
+    code = shell.run_shell_loop(
+        profile=shell.TerminalProfile(), max_turns=5,
+        gateway="http://localhost:8642",
+    )
+
+    assert code == 0
+    assert "GATEWAY RESPONSE" in capsys.readouterr().out

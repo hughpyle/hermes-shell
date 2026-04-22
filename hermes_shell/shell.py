@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import Iterable
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
-_SYSTEM_PROMPT_TEMPLATE = (_PACKAGE_DIR / "system_prompt.txt").read_text()
 _WRITE_CHUNK = 256
 # Translation table: keep ASCII + BEL, delete everything else
 _ASCII_TABLE = {i: None for i in range(128, 0x110000)}
@@ -71,7 +70,8 @@ def _env_int(name: str) -> int | None:
 
 
 def build_system_prompt(profile: TerminalProfile) -> str:
-    return _SYSTEM_PROMPT_TEMPLATE.format(term=profile.term, columns=profile.columns)
+    template = (_PACKAGE_DIR / "system_prompt.txt").read_text()
+    return template.format(term=profile.term, columns=profile.columns)
 
 
 def parse_hermes_output(stdout: str) -> tuple[str, str | None]:

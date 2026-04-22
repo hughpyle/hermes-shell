@@ -12,6 +12,7 @@ dependencies = []
 
 [project.scripts]
 hermes-shell = "hermes_shell.shell:main"
+hsh = "hermes_shell.shell:main"
 
 [tool.setuptools.package-data]
 hermes_shell = ["system_prompt.txt"]

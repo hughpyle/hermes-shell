@@ -50,9 +50,10 @@ set -eu
 export TERM="\${TERM:-tty33}"
 export COLUMNS="\${COLUMNS:-72}"
 export LINES="\${LINES:-24}"
-exec "$VENV/bin/hermes-shell" "\$@"
+exec "$VENV/bin/hsh" "\$@"
 EOF
 chmod +x "$WRAPPER"
+ln -sf "$VENV/bin/hsh" "$BIN_DIR/hsh"
 
 printf 'Install complete.\n\n'
 printf 'What you now have:\n'

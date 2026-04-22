@@ -1,0 +1,5 @@
+Match User hermes
+    PermitTTY yes
+    X11Forwarding no
+    AllowTcpForwarding no
+    ForceCommand /home/hermes/.local/bin/hermes-shell-login

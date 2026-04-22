@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-shell"
+version = "0.1.0"
+description = "Minimal teletype-safe shell wrapper for Hermes Agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+hermes-shell = "hermes_shell.shell:main"
+
+[tool.setuptools.package-data]
+hermes_shell = ["system_prompt.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

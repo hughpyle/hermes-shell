@@ -8,6 +8,23 @@ import pytest
 from hermes_shell import shell
 
 
+class DualOut:
+    """Text-mode file object whose .buffer captures raw bytes."""
+
+    def __init__(self):
+        self.buffer = io.BytesIO()
+
+    def write(self, s):
+        self.buffer.write(s.encode("ascii", "replace"))
+
+    def flush(self):
+        self.buffer.flush()
+
+    @property
+    def raw(self):
+        return self.buffer.getvalue()
+
+
 def test_detect_terminal_profile_prefers_environment(monkeypatch):
     monkeypatch.setenv("TERM", "tty33")
     monkeypatch.setenv("COLUMNS", "72")
@@ -157,22 +174,12 @@ def test_emit_output_binary_decodes_and_writes_raw():
     encoded = base64.b64encode(b"\x00\xff\x80").decode()
     text = f"before\n<<BINARY>>\n{encoded}\n<<END>>\nafter"
 
-    raw_buf = io.BytesIO()
+    out = DualOut()
+    shell.emit_output(text, width=72, out=out)
 
-    class DualOut:
-        """Text-mode file object whose .buffer holds raw bytes."""
-        buffer = raw_buf
-        def write(self, s):
-            raw_buf.write(s.encode("ascii", "replace"))
-        def flush(self):
-            raw_buf.flush()
-
-    shell.emit_output(text, width=72, out=DualOut())
-
-    raw = raw_buf.getvalue()
-    assert b"\x00\xff\x80" in raw
-    assert b"before" in raw
-    assert b"after" in raw
+    assert b"\x00\xff\x80" in out.raw
+    assert b"before" in out.raw
+    assert b"after" in out.raw
 
 
 def test_emit_output_binary_invalid_base64(capsys):
@@ -218,17 +225,9 @@ def test_emit_file_writes_raw_bytes(tmp_path):
     f = tmp_path / "overstrike.txt"
     f.write_bytes(b"HELLO\rWORLD\n")
 
-    raw_buf = io.BytesIO()
-
-    class DualOut:
-        buffer = raw_buf
-        def write(self, s):
-            raw_buf.write(s.encode("ascii", "replace"))
-        def flush(self):
-            raw_buf.flush()
-
-    shell.emit_file(str(f), out=DualOut())
-    assert raw_buf.getvalue() == b"HELLO\rWORLD\n"
+    out = DualOut()
+    shell.emit_file(str(f), out=out)
+    assert out.raw == b"HELLO\rWORLD\n"
 
 
 def test_emit_file_missing_file(capsys):
@@ -241,21 +240,12 @@ def test_emit_output_file_segment(tmp_path):
     f = tmp_path / "test.txt"
     f.write_bytes(b"RAW\rCONTENT")
 
-    raw_buf = io.BytesIO()
-
-    class DualOut:
-        buffer = raw_buf
-        def write(self, s):
-            raw_buf.write(s.encode("ascii", "replace"))
-        def flush(self):
-            raw_buf.flush()
-
+    out = DualOut()
     text = f"intro\n<<FILE>>\n{f}\n<<END>>\noutro"
-    shell.emit_output(text, width=72, out=DualOut())
-    raw = raw_buf.getvalue()
-    assert b"RAW\rCONTENT" in raw
-    assert b"intro" in raw
-    assert b"outro" in raw
+    shell.emit_output(text, width=72, out=out)
+    assert b"RAW\rCONTENT" in out.raw
+    assert b"intro" in out.raw
+    assert b"outro" in out.raw
 
 
 def test_shell_loop_print_command(monkeypatch, tmp_path, capsys):

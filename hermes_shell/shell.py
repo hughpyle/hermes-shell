@@ -15,7 +15,11 @@ from dataclasses import dataclass
 from typing import Iterable
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
+_SYSTEM_PROMPT_TEMPLATE = (_PACKAGE_DIR / "system_prompt.txt").read_text()
 _WRITE_CHUNK = 256
+# Translation table: keep ASCII + BEL, delete everything else
+_ASCII_TABLE = {i: None for i in range(128, 0x110000)}
+_ASCII_TABLE[0x07] = 0x07  # preserve BEL
 
 input = builtins.input
 
@@ -27,6 +31,12 @@ def flush_tty() -> None:
         termios.tcflush(sys.stdout.fileno(), termios.TCOFLUSH)
     except (ImportError, OSError):
         pass
+
+
+def _interrupted() -> None:
+    flush_tty()
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 
 
 BINARY_START = "<<BINARY>>"
@@ -44,8 +54,9 @@ class TerminalProfile:
 
 def detect_terminal_profile() -> TerminalProfile:
     term = os.getenv("TERM", "dumb") or "dumb"
-    columns = _env_int("COLUMNS") or shutil.get_terminal_size((72, 24)).columns
-    lines = _env_int("LINES") or shutil.get_terminal_size((72, 24)).lines
+    fallback = shutil.get_terminal_size((72, 24))
+    columns = _env_int("COLUMNS") or fallback.columns
+    lines = _env_int("LINES") or fallback.lines
     return TerminalProfile(term=term, columns=columns, lines=lines)
 
 
@@ -60,8 +71,7 @@ def _env_int(name: str) -> int | None:
 
 
 def build_system_prompt(profile: TerminalProfile) -> str:
-    template = (_PACKAGE_DIR / "system_prompt.txt").read_text()
-    return template.format(term=profile.term, columns=profile.columns)
+    return _SYSTEM_PROMPT_TEMPLATE.format(term=profile.term, columns=profile.columns)
 
 
 def parse_hermes_output(stdout: str) -> tuple[str, str | None]:
@@ -117,14 +127,7 @@ def run_turn(
 
 
 def ascii_sanitize(text: str) -> str:
-    normalized = unicodedata.normalize("NFKD", text)
-    out: list[str] = []
-    for ch in normalized:
-        if ch == "\x07":  # BEL
-            out.append(ch)
-        elif ch.isascii():
-            out.append(ch)
-    return "".join(out)
+    return unicodedata.normalize("NFKD", text).translate(_ASCII_TABLE)
 
 
 def wrap_text(text: str, width: int) -> str:
@@ -189,7 +192,6 @@ def emit_text(text: str, width: int = 72, out=None) -> None:
 
 
 def _write_raw(data: bytes, out=None) -> None:
-    """Write raw bytes in chunks, raising KeyboardInterrupt between chunks."""
     buf = getattr(out, "buffer", None) if out else None
     buf = buf or sys.stdout.buffer
     for offset in range(0, len(data), _WRITE_CHUNK):
@@ -249,9 +251,7 @@ def run_shell_loop(
         except EOFError:
             return 0
         except KeyboardInterrupt:
-            flush_tty()
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+            _interrupted()
             continue
 
         prompt = line.strip()
@@ -280,9 +280,7 @@ def run_shell_loop(
                 skills=skills,
             )
         except KeyboardInterrupt:
-            flush_tty()
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+            _interrupted()
             continue
         except Exception as exc:
             msg = str(exc).split("\n", 1)[0][:profile.columns]
@@ -294,9 +292,7 @@ def run_shell_loop(
             session_id = new_sid
             emit_output(response, width=profile.columns)
         except KeyboardInterrupt:
-            flush_tty()
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+            _interrupted()
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -15,8 +15,18 @@ from dataclasses import dataclass
 from typing import Iterable
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
+_WRITE_CHUNK = 256
 
 input = builtins.input
+
+
+def flush_tty() -> None:
+    """Discard pending tty output (kernel buffer). Best-effort."""
+    try:
+        import termios
+        termios.tcflush(sys.stdout.fileno(), termios.TCOFLUSH)
+    except (ImportError, OSError):
+        pass
 
 
 BINARY_START = "<<BINARY>>"
@@ -178,10 +188,17 @@ def emit_text(text: str, width: int = 72, out=None) -> None:
     out.flush()
 
 
-def emit_file(path: str, out=None) -> None:
-    """Write a file's raw bytes to stdout, preserving CR overstrike and all content."""
+def _write_raw(data: bytes, out=None) -> None:
+    """Write raw bytes in chunks, raising KeyboardInterrupt between chunks."""
     buf = getattr(out, "buffer", None) if out else None
     buf = buf or sys.stdout.buffer
+    for offset in range(0, len(data), _WRITE_CHUNK):
+        buf.write(data[offset : offset + _WRITE_CHUNK])
+        buf.flush()
+
+
+def emit_file(path: str, out=None) -> None:
+    """Write a file's raw bytes to stdout, preserving CR overstrike and all content."""
     try:
         data = Path(path).read_bytes()
     except Exception as exc:
@@ -190,8 +207,7 @@ def emit_file(path: str, out=None) -> None:
         text_out.write(f"error: {msg}\n")
         text_out.flush()
         return
-    buf.write(data)
-    buf.flush()
+    _write_raw(data, out=out)
 
 
 def emit_output(text: str, width: int = 72, out=None) -> None:
@@ -210,9 +226,7 @@ def emit_output(text: str, width: int = 72, out=None) -> None:
                 out.write("error: invalid binary data\n")
                 out.flush()
                 continue
-            buf = getattr(out, "buffer", None) or sys.stdout.buffer
-            buf.write(raw)
-            buf.flush()
+            _write_raw(raw, out=out)
 
 
 def run_shell_loop(
@@ -235,9 +249,10 @@ def run_shell_loop(
         except EOFError:
             return 0
         except KeyboardInterrupt:
+            flush_tty()
             sys.stdout.write("\n")
             sys.stdout.flush()
-            return 130
+            continue
 
         prompt = line.strip()
         if not prompt:
@@ -247,11 +262,12 @@ def run_shell_loop(
         if prompt in {".reset", ".new"}:
             session_id = None
             continue
-        if prompt.startswith(".print "):
-            emit_file(prompt[7:].strip())
-            continue
 
         try:
+            if prompt.startswith(".print "):
+                emit_file(prompt[7:].strip())
+                continue
+
             response, new_sid = run_turn(
                 prompt=prompt,
                 session_id=session_id,
@@ -263,14 +279,24 @@ def run_shell_loop(
                 toolsets=toolsets,
                 skills=skills,
             )
+        except KeyboardInterrupt:
+            flush_tty()
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            continue
         except Exception as exc:
             msg = str(exc).split("\n", 1)[0][:profile.columns]
             sys.stdout.write(f"error: {msg}\n")
             sys.stdout.flush()
             continue
 
-        session_id = new_sid
-        emit_output(response, width=profile.columns)
+        try:
+            session_id = new_sid
+            emit_output(response, width=profile.columns)
+        except KeyboardInterrupt:
+            flush_tty()
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
 
 def main(argv: list[str] | None = None) -> int:

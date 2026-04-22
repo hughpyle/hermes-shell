@@ -276,6 +276,52 @@ def test_shell_loop_print_command(monkeypatch, tmp_path, capsys):
     assert "PRINTED" in out
 
 
+def test_ctrl_c_during_output_returns_to_prompt(monkeypatch, capsys):
+    call_count = 0
+
+    def fake_input(_prompt):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "hello"
+        if call_count == 2:
+            return ".exit"
+        raise AssertionError("too many prompts")
+
+    def fake_run_turn(prompt, session_id, hermes_bin, profile, max_turns, **kw):
+        return ("long response", "s1")
+
+    def fake_emit_output(text, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(shell, "input", fake_input)
+    monkeypatch.setattr(shell, "run_turn", fake_run_turn)
+    monkeypatch.setattr(shell, "emit_output", fake_emit_output)
+    monkeypatch.setattr(shell, "flush_tty", lambda: None)
+
+    code = shell.run_shell_loop(hermes_bin="hermes", profile=shell.TerminalProfile(), max_turns=5)
+    assert code == 0
+
+
+def test_ctrl_c_at_prompt_continues(monkeypatch, capsys):
+    call_count = 0
+
+    def fake_input(_prompt):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise KeyboardInterrupt
+        if call_count == 2:
+            return ".exit"
+        raise AssertionError("too many prompts")
+
+    monkeypatch.setattr(shell, "input", fake_input)
+    monkeypatch.setattr(shell, "flush_tty", lambda: None)
+
+    code = shell.run_shell_loop(hermes_bin="hermes", profile=shell.TerminalProfile(), max_turns=5)
+    assert code == 0
+
+
 def test_shell_loop_catches_hermes_error(monkeypatch, capsys):
     prompts = iter(["boom", ".exit"])
 

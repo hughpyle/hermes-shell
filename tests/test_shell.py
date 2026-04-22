@@ -334,6 +334,88 @@ def test_shell_loop_catches_hermes_error(monkeypatch, capsys):
     assert len(error_lines) == 1
 
 
+def test_read_gateway_config(tmp_path, monkeypatch):
+    config = tmp_path / "config.yaml"
+    config.write_text("""\
+model:
+  default: gpt-4
+platforms:
+  api_server:
+    key: secret123
+    port: 9999
+    host: 0.0.0.0
+other_stuff: true
+""")
+    monkeypatch.setattr(shell, "_HERMES_CONFIG", config)
+    key, port, host = shell._read_gateway_config()
+    assert key == "secret123"
+    assert port == 9999
+    assert host == "0.0.0.0"
+
+
+def test_read_gateway_config_missing_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(shell, "_HERMES_CONFIG", tmp_path / "nonexistent.yaml")
+    key, port, host = shell._read_gateway_config()
+    assert key is None
+    assert port is None
+    assert host is None
+
+
+def test_detect_gateway_from_dotenv(tmp_path, monkeypatch):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("""\
+# comment
+API_SERVER_KEY=dotenv_secret
+API_SERVER_PORT=7654
+""")
+    monkeypatch.setattr(shell, "_HERMES_ENV", dotenv)
+    monkeypatch.setattr(shell, "_HERMES_CONFIG", tmp_path / "nonexistent.yaml")
+    monkeypatch.delenv("API_SERVER_KEY", raising=False)
+    monkeypatch.delenv("API_SERVER_PORT", raising=False)
+    monkeypatch.delenv("API_SERVER_HOST", raising=False)
+
+    url, api_key = shell.detect_gateway()
+    assert url == "http://127.0.0.1:7654"
+    assert api_key == "dotenv_secret"
+
+
+def test_detect_gateway_from_config(tmp_path, monkeypatch):
+    config = tmp_path / "config.yaml"
+    config.write_text("""\
+platforms:
+  api_server:
+    key: mykey
+    port: 7777
+""")
+    monkeypatch.setattr(shell, "_HERMES_CONFIG", config)
+    monkeypatch.setattr(shell, "_HERMES_ENV", tmp_path / "nonexistent.env")
+    monkeypatch.delenv("API_SERVER_KEY", raising=False)
+    monkeypatch.delenv("API_SERVER_PORT", raising=False)
+    monkeypatch.delenv("API_SERVER_HOST", raising=False)
+
+    url, api_key = shell.detect_gateway()
+    assert url == "http://127.0.0.1:7777"
+    assert api_key == "mykey"
+
+
+def test_detect_gateway_env_overrides_config(tmp_path, monkeypatch):
+    config = tmp_path / "config.yaml"
+    config.write_text("""\
+platforms:
+  api_server:
+    key: config_key
+    port: 7777
+""")
+    monkeypatch.setattr(shell, "_HERMES_CONFIG", config)
+    monkeypatch.setattr(shell, "_HERMES_ENV", tmp_path / "nonexistent.env")
+    monkeypatch.setenv("API_SERVER_KEY", "env_key")
+    monkeypatch.setenv("API_SERVER_PORT", "8888")
+
+    url, api_key = shell.detect_gateway()
+    assert url == "http://127.0.0.1:8888"
+    assert api_key == "env_key"
+
+
 def test_run_turn_gateway_sends_correct_request(monkeypatch):
     import json
     import urllib.request
@@ -445,7 +527,7 @@ def test_shell_loop_uses_gateway_when_set(monkeypatch, capsys):
     def fake_input(_prompt):
         return next(prompts)
 
-    def fake_gateway(prompt, session_id, gateway_url, profile, model=None):
+    def fake_gateway(prompt, session_id, gateway_url, profile, model=None, api_key=None):
         return ("GATEWAY RESPONSE", "gs1")
 
     monkeypatch.setattr(shell, "input", fake_input)

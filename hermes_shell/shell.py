@@ -73,6 +73,79 @@ def _env_int(name: str) -> int | None:
         return None
 
 
+_HERMES_DIR = Path.home() / ".hermes"
+_HERMES_CONFIG = _HERMES_DIR / "config.yaml"
+_HERMES_ENV = _HERMES_DIR / ".env"
+
+
+def _read_dotenv(path: Path) -> dict[str, str]:
+    """Read KEY=VALUE pairs from a .env file. Best-effort."""
+    vals: dict[str, str] = {}
+    try:
+        text = path.read_text()
+    except OSError:
+        return vals
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        vals[k.strip()] = v.strip().strip("'\"")
+    return vals
+
+
+def _read_gateway_config() -> tuple[str | None, int | None, str | None]:
+    """Read api_server key, port, host from ~/.hermes/config.yaml. Best-effort."""
+    try:
+        text = _HERMES_CONFIG.read_text()
+    except OSError:
+        return None, None, None
+    in_api_server = False
+    key = port = host = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "api_server:":
+            in_api_server = True
+            continue
+        if in_api_server:
+            if line and not line[0].isspace():
+                break
+            if stripped.startswith("key:"):
+                key = stripped[4:].strip().strip("'\"")
+            elif stripped.startswith("port:"):
+                try:
+                    port = int(stripped[5:].strip())
+                except ValueError:
+                    pass
+            elif stripped.startswith("host:"):
+                host = stripped[5:].strip().strip("'\"")
+    return key, port, host
+
+
+def detect_gateway() -> tuple[str | None, str | None]:
+    """Auto-detect gateway URL and API key from env vars, .env, and config.yaml."""
+    dotenv = _read_dotenv(_HERMES_ENV)
+    api_key = os.getenv("API_SERVER_KEY") or dotenv.get("API_SERVER_KEY")
+    host = os.getenv("API_SERVER_HOST") or dotenv.get("API_SERVER_HOST") or "127.0.0.1"
+    port_str = os.getenv("API_SERVER_PORT") or dotenv.get("API_SERVER_PORT")
+    try:
+        port = int(port_str) if port_str else None
+    except ValueError:
+        port = None
+    cfg_key, cfg_port, cfg_host = _read_gateway_config()
+    if not api_key and cfg_key:
+        api_key = cfg_key
+    if not port and cfg_port:
+        port = cfg_port
+    if not os.getenv("API_SERVER_HOST") and not dotenv.get("API_SERVER_HOST") and cfg_host:
+        host = cfg_host
+    port = port or 8642
+    url = f"http://{host}:{port}"
+    return url, api_key
+
+
 def build_system_prompt(profile: TerminalProfile) -> str:
     template = (_PACKAGE_DIR / "system_prompt.txt").read_text()
     return template.format(columns=profile.columns)
@@ -136,6 +209,7 @@ def run_turn_gateway(
     gateway_url: str,
     profile: TerminalProfile,
     model: str | None = None,
+    api_key: str | None = None,
 ) -> tuple[str, str]:
     """Send a turn via the Hermes HTTP gateway (OpenAI-compatible API)."""
     if session_id is None:
@@ -154,6 +228,8 @@ def run_turn_gateway(
         "Content-Type": "application/json",
         "X-Hermes-Session-Id": session_id,
     }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
@@ -281,6 +357,7 @@ def run_shell_loop(
     toolsets: str | None = None,
     skills: Iterable[str] | None = None,
     gateway: str | None = None,
+    api_key: str | None = None,
 ) -> int:
     profile = profile or detect_terminal_profile()
     session_id = None
@@ -317,6 +394,7 @@ def run_shell_loop(
                     gateway_url=gateway,
                     profile=profile,
                     model=model,
+                    api_key=api_key,
                 )
             else:
                 response, new_sid = run_turn(
@@ -359,9 +437,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--provider", default=None)
     parser.add_argument("--toolsets", default=None)
     parser.add_argument("--skills", action="append", default=None)
-    parser.add_argument("--gateway", default=os.getenv("HERMES_GATEWAY"),
-                        help="Hermes gateway URL (e.g. http://localhost:8642)")
+    parser.add_argument("--gateway", nargs="?", const="auto", default=None,
+                        help="use gateway (URL or 'auto' to detect from hermes config)")
+    parser.add_argument("--api-key", default=None,
+                        help="API key for gateway auth (auto-detected from hermes config)")
     args = parser.parse_args(argv)
+
+    # Resolve gateway: explicit URL, auto-detect, or env var
+    gateway_url = None
+    api_key = args.api_key
+    if args.gateway == "auto" or (args.gateway is None and os.getenv("HERMES_GATEWAY")):
+        if args.gateway == "auto":
+            detected_url, detected_key = detect_gateway()
+            gateway_url = detected_url
+            if not api_key:
+                api_key = detected_key
+        else:
+            gateway_url = os.getenv("HERMES_GATEWAY")
+            if not api_key:
+                api_key = os.getenv("API_SERVER_KEY")
+    elif args.gateway and args.gateway != "auto":
+        gateway_url = args.gateway
+        if not api_key:
+            _, detected_key = detect_gateway()
+            api_key = detected_key
 
     detected = detect_terminal_profile()
     profile = TerminalProfile(
@@ -377,7 +476,8 @@ def main(argv: list[str] | None = None) -> int:
         provider=args.provider,
         toolsets=args.toolsets,
         skills=args.skills,
-        gateway=args.gateway,
+        gateway=gateway_url,
+        api_key=api_key,
     )
 
 

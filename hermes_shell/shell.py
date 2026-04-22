@@ -71,7 +71,7 @@ def _env_int(name: str) -> int | None:
 
 def build_system_prompt(profile: TerminalProfile) -> str:
     template = (_PACKAGE_DIR / "system_prompt.txt").read_text()
-    return template.format(term=profile.term, columns=profile.columns)
+    return template.format(columns=profile.columns)
 
 
 def parse_hermes_output(stdout: str) -> tuple[str, str | None]:

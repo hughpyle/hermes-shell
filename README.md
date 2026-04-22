@@ -22,7 +22,7 @@ installed `hermes` command instead of patching Hermes internals.
 ```sh
 cd ~/play/hermes-shell
 ./install.sh
-~/.local/bin/hermes-shell-login
+~/.local/bin/hsh
 ```
 
 Then type normal prompts.
@@ -83,7 +83,7 @@ Second, it builds a system-prompt addendum from
 hardcopy terminal with those constraints. You can edit that file directly
 to change what Hermes is told about the terminal.
 
-Important: `hermes-shell` does not itself interpret terminfo or emulate a
+Important: `hsh` does not itself interpret terminfo or emulate a
 terminal. It is a plain text wrapper that:
 
 - tells Hermes about the terminal constraints
@@ -126,7 +126,8 @@ It does exactly three things:
 
 1. creates a Python virtualenv in `~/play/hermes-shell/.venv`
 2. installs this project into that virtualenv in editable mode
-3. writes a launcher script at `~/.local/bin/hermes-shell-login`
+3. writes a launcher at `~/.local/bin/hsh` (and a login-shell
+   wrapper at `~/.local/bin/hermes-shell-login`)
 
 It does not:
 
@@ -138,7 +139,7 @@ It does not:
 So the intended flow is:
 
 1. run `install.sh` as the target user
-2. test `~/.local/bin/hermes-shell-login`
+2. test `~/.local/bin/hsh`
 3. only then wire it into ssh or getty
 
 Run it like this:
@@ -148,10 +149,10 @@ cd ~/play/hermes-shell
 ./install.sh
 ```
 
-After it finishes, test the wrapper:
+After it finishes, test:
 
 ```sh
-~/.local/bin/hermes-shell-login
+hsh
 ```
 
 That should drop you into the minimal Hermes shell.
@@ -160,16 +161,10 @@ If that works, then proceed to login-shell or getty setup.
 Files created by the installer:
 
 - project virtualenv: `~/play/hermes-shell/.venv`
-- user launcher: `~/.local/bin/hermes-shell-login`
-
-The launcher is intentionally tiny. It just sets teletype-friendly
-defaults if they are not already present:
-
-- `TERM=tty33`
-- `COLUMNS=72`
-- `LINES=24`
-
-and then execs the virtualenv's `hermes-shell` command.
+- `~/.local/bin/hsh` — the main command
+- `~/.local/bin/hermes-shell-login` — login-shell wrapper that sets
+  teletype-friendly defaults (`TERM=tty33`, `COLUMNS=72`, `LINES=24`)
+  then execs `hsh`
 
 You can also run it directly without installing the wrapper:
 
@@ -181,7 +176,7 @@ python -m hermes_shell.shell
 ## options
 
 ```sh
-hermes-shell-login --help
+hsh --help
 ```
 
 Useful flags:

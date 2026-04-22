@@ -4,7 +4,7 @@
 # What this script does:
 # 1. Creates a local virtualenv in the project directory.
 # 2. Installs this project into that virtualenv in editable mode.
-# 3. Writes a small launcher script to ~/.local/bin/hermes-shell-login.
+# 3. Writes a small launcher script to ~/.local/bin/hsh
 #
 # What it does NOT do:
 # - it does not install Hermes itself
@@ -18,7 +18,7 @@
 #   ./install.sh
 #
 # After running it, test with:
-#   ~/.local/bin/hermes-shell-login
+#   ~/.local/bin/hsh
 
 set -eu
 

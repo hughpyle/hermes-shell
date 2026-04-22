@@ -44,7 +44,6 @@ def test_build_system_prompt_includes_teletype_constraints():
 
     assert "ASCII" in prompt
     assert "72" in prompt
-    assert "tty33" in prompt
 
 
 def test_parse_hermes_output_extracts_response_and_session_id():
